@@ -58,119 +58,131 @@ server_sock.bind(("", port))
 server_sock.listen(5)
 print(f"Server listening on port {port} ...")
 
-# outer loop: continuously accept new clients
-while True:
-
-    # listen for client
-    # client requests control connection: accept client
-    ctrl_sock, addr = server_sock.accept()
-    client_ip = addr[0]
-    print(f"[+] Client connected: {addr}")
-
-    # state tracked per client
-    client_port   = None   # set when PORT message arrives
-    pending_cmd   = None   # which command is waiting for data transfer
-    pending_args  = None   # file name / listing associated with that command
-
-    # CONTROL CHANNEL
-    # inner loop: each client has its own loop
-    # loop while the client-specific control channel socket is open
+# Using try for a cleaner close
+try:
+    # outer loop: continuously accept new clients
     while True:
 
-        # receive client message
-        msg = recv_msg(ctrl_sock)
-        if not msg:
-            print(f"[-] Client {addr} disconnected.")
-            break
+        # listen for client
+        # client requests control connection: accept client
+        ctrl_sock, addr = server_sock.accept()
+        client_ip = addr[0]
+        print(f"[+] Client connected: {addr}")
 
-        # parse message
-        parts = msg.split()
-        cmd   = parts[0].upper()
+        # state tracked per client
+        client_port   = None   # set when PORT message arrives
+        pending_cmd   = None   # which command is waiting for data transfer
+        pending_args  = None   # file name / listing associated with that command
 
-        # if the message is GET
-        if cmd == "GET":
-            filename = parts[1]
-            # if file exists
-            if os.path.isfile(filename):
-                # send OK <filesize>
-                filesize = os.path.getsize(filename)
-                send_msg(ctrl_sock, f"OK {filesize}\n")
-                pending_cmd  = "GET"
-                pending_args = filename
-            # if file does not exist
-            else:
-                # send ERROR 'file does not exist'
-                send_msg(ctrl_sock, f"ERROR file does not exist: {filename}\n")
+        # CONTROL CHANNEL
+        # inner loop: each client has its own loop
+        # loop while the client-specific control channel socket is open
+        while True:
 
-        # if message is PUT
-        elif cmd == "PUT":
-            filename = parts[1]
-            filesize = int(parts[2])
-            # send READY
-            send_msg(ctrl_sock, "READY\n")
-            pending_cmd  = "PUT"
-            pending_args = (filename, filesize)
+            # receive client message
+            msg = recv_msg(ctrl_sock)
+            if not msg:
+                print(f"[-] Client {addr} disconnected.")
+                break
 
-        # if message is LS
-        elif cmd == "LS":
-            # run the ls command on server side
-            result  = subprocess.run(["ls"], capture_output=True, text=True)
-            listing = result.stdout
-            # send OK <total length of dir listing>
-            send_msg(ctrl_sock, f"OK {len(listing.encode())}\n")
-            pending_cmd  = "LS"
-            pending_args = listing
+            # parse message
+            parts = msg.split()
+            cmd   = parts[0].upper()
 
-        # if message is PORT
-        elif cmd == "PORT":
-            # store client port
-            client_port = int(parts[1])
+            # if the message is GET
+            if cmd == "GET":
+                filename = parts[1]
+                # if file exists
+                if os.path.isfile(filename):
+                    # send OK <filesize>
+                    filesize = os.path.getsize(filename)
+                    send_msg(ctrl_sock, f"OK {filesize}\n")
+                    pending_cmd  = "GET"
+                    pending_args = filename
+                # if file does not exist
+                else:
+                    # send ERROR 'file does not exist'
+                    send_msg(ctrl_sock, f"ERROR file does not exist: {filename}\n")
 
-        # DATA CHANNEL
-        # if GET, PUT, or LS and client port is stored
-        if pending_cmd in ("GET", "PUT", "LS") and client_port is not None:
+            # if message is PUT
+            elif cmd == "PUT":
+                filename = parts[1]
+                filesize = int(parts[2])
+                # send READY
+                send_msg(ctrl_sock, "READY\n")
+                pending_cmd  = "PUT"
+                pending_args = (filename, filesize)
 
-            # create new socket using client's IP + port number
-            # connect to client port
-            data_sock = socket(AF_INET, SOCK_STREAM)
-            data_sock.connect((client_ip, client_port))
+            # if message is LS
+            elif cmd == "LS":
+                # run the ls command on server side
+                result  = subprocess.run(["ls"], capture_output=True, text=True)
+                listing = result.stdout
+                # send OK <total length of dir listing>
+                send_msg(ctrl_sock, f"OK {len(listing.encode())}\n")
+                pending_cmd  = "LS"
+                pending_args = listing
 
-            # if GET/LS
-            if pending_cmd == "GET":
-                # send until all <filesize/length> bytes sent
-                with open(pending_args, "rb") as f:
-                    payload = f.read()
-                send_bytes(data_sock, payload)
-                print(f"[>] GET  '{pending_args}' – sent {len(payload)} bytes")
+            # if message is PORT
+            elif cmd == "PORT":
+                # store client port
+                client_port = int(parts[1])
 
-            elif pending_cmd == "LS":
-                # send until all <filesize/length> bytes sent
-                send_bytes(data_sock, pending_args.encode())
-                print(f"[>] LS   – sent {len(pending_args)} bytes")
+            # DATA CHANNEL
+            # if GET, PUT, or LS and client port is stored
+            if pending_cmd in ("GET", "PUT", "LS") and client_port is not None:
 
-            # if PUT
-            elif pending_cmd == "PUT":
-                # receive until all expected <filesize> bytes received
-                filename, filesize = pending_args
-                payload = recv_bytes(data_sock, filesize)
-                with open(filename, "wb") as f:
-                    f.write(payload)
-                print(f"[<] PUT  '{filename}' – received {len(payload)} bytes")
+                # create new socket using client's IP + port number
+                # connect to client port
+                data_sock = socket(AF_INET, SOCK_STREAM)
+                data_sock.connect((client_ip, client_port))
 
-            # close data connection
-            data_sock.close()
+                # if GET/LS
+                if pending_cmd == "GET":
+                    # send until all <filesize/length> bytes sent
+                    with open(pending_args, "rb") as f:
+                        payload = f.read()
+                    send_bytes(data_sock, payload)
+                    print(f"[>] GET  '{pending_args}' – sent {len(payload)} bytes")
 
-            # clear the stored client port
-            client_port  = None
-            pending_cmd  = None
-            pending_args = None
+                elif pending_cmd == "LS":
+                    # send until all <filesize/length> bytes sent
+                    send_bytes(data_sock, pending_args.encode())
+                    print(f"[>] LS   – sent {len(pending_args)} bytes")
 
-        # if the message is QUIT
-        if cmd == "QUIT":
-            # close the control connection for this client
-            print(f"[-] Client {addr} quit.")
-            ctrl_sock.close()
-            break
+                # if PUT
+                elif pending_cmd == "PUT":
+                    # receive until all expected <filesize> bytes received
+                    filename, filesize = pending_args
+                    payload = recv_bytes(data_sock, filesize)
+                    with open(filename, "wb") as f:
+                        f.write(payload)
+                    print(f"[<] PUT  '{filename}' – received {len(payload)} bytes")
+
+                # close data connection
+                data_sock.close()
+
+                # clear the stored client port
+                client_port  = None
+                pending_cmd  = None
+                pending_args = None
+
+            # if the message is QUIT
+            if cmd == "QUIT":
+                # close the control connection for this client
+                print(f"[-] Client {addr} quit.")
+                ctrl_sock.close()
+                break
+# When pressing CTRL+C the server closes smoothly                
+except KeyboardInterrupt:
+    print("\nSERVER IS NOW CLOSING(CTRL+C)")
 
 # close server
-server_sock.close()
+finally:
+    # Cleaner Close
+    try:
+        server_sock.close()
+    except:
+        pass
+    # Final Message Goodbye
+    print("Server is Closed. Goodbye.")

@@ -3,7 +3,7 @@
 ## Group Members
 - Eddie Cortes (eccortes@csu.fullerton.edu)
 - Quentin Rivest (queriv47x@csu.fullerton.edu)
-- Josh Navarro
+- Josh Navarro (joshpatnav@csu.fullerton.edu) 
 - Emma Gomez (emmanicolego@csu.fullerton.edu)
 - Ngoc Tran (ntran562@csu.fullerton.edu)
 
